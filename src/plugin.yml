@@ -1,0 +1,41 @@
+name: NecroCore
+version: 1.2.0
+main: factorsi.di.NecroCore.NecroCore
+description: A plugin that lets players get revived in hardcore mode with concussion system.
+author: Factorsi_di|Nicto_55
+api-version: "1.21"
+website: https://example.com
+
+commands:
+  necro:
+    description: Revive a player or accept revive.
+    usage: /necro <player>|accept
+  necromode:
+    description: Set post-death mode (ghost or spectator)
+    usage: /necromode <spectator|ghost>
+  necroforce:
+    description: Force revive a dead (spectator/ghost) player or all dead players (operator only)
+    usage: /necroforce <player|all>
+  ghostnow:
+    description: Immediately transition to ghost mode while concussed
+    usage: /ghostnow
+
+permissions:
+  hardcorenecro.revive:
+    description: Allow player to create revive requests.
+    default: true
+  hardcorenecro.ghost.accept:
+    description: Allow player to accept revival.
+    default: true
+  hardcorenecro.mode.change:
+    description: Allow player to change death mode.
+    default: op
+  hardcorenecro.force:
+    description: Allow force revival without confirmation or resource cost.
+    default: op
+  hardcorenecro.ghost.gamemode:
+    description: Allow toggling ghost mode manually via /gamemode ghost
+    default: op
+  hardcorenecro.ghostnow:
+    description: Allow transition to ghost while concussed
+    default: true
