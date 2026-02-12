@@ -46,6 +46,24 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
     private final HashMap<String, Integer> successfulRevives = new HashMap<>();
     private final Set<UUID> concussedPlayers = Collections.synchronizedSet(new HashSet<>());
     private final HashMap<UUID, Long> concussionStartTime = new HashMap<>();
+    private final HashMap<UUID, BukkitRunnable> activeRevivalAnimations = new HashMap<>();
+
+    // Константы настроек
+    private static final int CONCUSSION_DURATION = 300; // 5 минут в секундах
+    private static final double CONCUSSION_START_HEALTH = 0.5;
+    private static final int REVIVAL_ANIMATION_DELAY_NORMAL = 4; // секунды
+    private static final int REVIVAL_ANIMATION_DELAY_FORCE = 3; // секунды
+    private static final double REVIVAL_HEALTH_COST = 4.0;
+    private static final int REVIVAL_REQUEST_TIMEOUT = 60; // секунды
+    private static final double BASE_FAILURE_CHANCE = 0.70;
+    private static final double FAILURE_MULTIPLIER = 0.85;
+    private static final double MIN_FAILURE_CHANCE = 0.10;
+    private static final double HEALTH_CHANGE_REVIVER = -4;
+    private static final double HEALTH_CHANGE_TARGET = 2;
+    private static final double GOLDEN_APPLE_HEAL_PERCENT = 0.20;
+    private static final double ENCHANTED_APPLE_HEAL_PERCENT = 0.50;
+    private static final double TOTEM_HEAL_PERCENT = 1.0;
+    private static final double ENCHANTED_APPLE_HEALTH_BOOST = 2.0;
 
     @Override
     public void onEnable() {
@@ -84,9 +102,121 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                 exitGhost(p);
             }
         }
+        // Останавливаем все активные анимации
+        for (BukkitRunnable animation : activeRevivalAnimations.values()) {
+            animation.cancel();
+        }
+        activeRevivalAnimations.clear();
     }
 
-    // ========== ОБРАБОТКА КОНТУЗИИ ==========
+    // ========== REVIVAL ANIMATION ==========
+
+    private void startSoulSandAuraAnimation(Player player, int durationSeconds) {
+        UUID playerId = player.getUniqueId();
+
+        // Отменяем предыдущую анимацию, если она есть
+        if (activeRevivalAnimations.containsKey(playerId)) {
+            activeRevivalAnimations.get(playerId).cancel();
+            activeRevivalAnimations.remove(playerId);
+        }
+
+        BukkitRunnable animation = new BukkitRunnable() {
+            int ticks = 0;
+            final int maxTicks = durationSeconds * 20;
+            double angle = 0;
+            final double radius = 1.5;
+            final double heightOffset = 0.5;
+            final int points = 12;
+
+            @Override
+            public void run() {
+                if (!player.isOnline() || ticks >= maxTicks) {
+                    this.cancel();
+                    activeRevivalAnimations.remove(playerId);
+                    return;
+                }
+
+                Location center = player.getLocation();
+
+                // Создаем круговую анимацию
+                for (int i = 0; i < 2; i++) {
+                    for (int j = 0; j < points; j++) {
+                        double currentAngle = angle + (j * 2 * Math.PI / points);
+
+                        double x = radius * Math.cos(currentAngle);
+                        double z = radius * Math.sin(currentAngle);
+                        double y = heightOffset + 0.3 * Math.sin(ticks * 0.1 + j * 0.5);
+
+                        Location particleLoc = center.clone().add(x, y, z);
+
+                        player.getWorld().spawnParticle(Particle.SOUL,
+                                particleLoc,
+                                2, 0.1, 0.1, 0.1, 0.05
+                        );
+
+                        if (ticks % 5 == 0) {
+                            player.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME,
+                                    particleLoc,
+                                    1, 0.05, 0.05, 0.05, 0.02
+                            );
+                        }
+                    }
+                }
+
+                angle += Math.PI / 40;
+                if (angle > 2 * Math.PI) {
+                    angle = 0;
+                }
+
+                ticks++;
+
+                if (ticks % 20 == 0) {
+                    spawnRevivalPulse(player);
+                }
+            }
+        };
+
+        animation.runTaskTimer(this, 0L, 1L);
+        activeRevivalAnimations.put(playerId, animation);
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (activeRevivalAnimations.containsKey(playerId)) {
+                    activeRevivalAnimations.get(playerId).cancel();
+                    activeRevivalAnimations.remove(playerId);
+                }
+            }
+        }.runTaskLater(this, durationSeconds * 20L);
+    }
+
+    private void spawnRevivalPulse(Player player) {
+        Location center = player.getLocation();
+
+        for (int i = 0; i < 16; i++) {
+            double angle = i * Math.PI / 8;
+            double x = Math.cos(angle);
+            double z = Math.sin(angle);
+
+            for (double r = 0.5; r <= 2.5; r += 0.5) {
+                Location pulseLoc = center.clone().add(x * r, 0.5, z * r);
+                player.getWorld().spawnParticle(Particle.SOUL,
+                        pulseLoc,
+                        1, 0, 0, 0, 0.1
+                );
+            }
+        }
+    }
+
+    private void stopSoulSandAuraAnimation(Player player) {
+        UUID playerId = player.getUniqueId();
+        if (activeRevivalAnimations.containsKey(playerId)) {
+            activeRevivalAnimations.get(playerId).cancel();
+            activeRevivalAnimations.remove(playerId);
+        }
+    }
+
+    // ========== CONCUSSION HANDLING ==========
 
     @EventHandler
     public void onPlayerDamage(EntityDamageEvent e) {
@@ -102,11 +232,11 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         double finalHealth = player.getHealth() - e.getFinalDamage();
 
         if (finalHealth <= 0) {
-            double safeDamage = Math.max(0, player.getHealth() - 0.5);
+            double safeDamage = Math.max(0, player.getHealth() - CONCUSSION_START_HEALTH);
             e.setDamage(safeDamage);
 
             Bukkit.getScheduler().runTask(this, () -> {
-                if (player.isOnline() && player.getHealth() <= 0.5) {
+                if (player.isOnline() && player.getHealth() <= CONCUSSION_START_HEALTH) {
                     enterConcussion(player);
                 }
             });
@@ -119,21 +249,21 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         concussedPlayers.add(player.getUniqueId());
         concussionStartTime.put(player.getUniqueId(), System.currentTimeMillis());
 
-        player.setHealth(0.5);
+        player.setHealth(CONCUSSION_START_HEALTH);
 
-        // API 1.21 использует SLOWNESS
-        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20*60*5, 0, false, false));
-        player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20*60*5, 255, false, false));
+        int concussionTicks = CONCUSSION_DURATION * 20;
+        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, concussionTicks, 0, false, false));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, concussionTicks, 255, false, false));
 
         player.sendTitle(
                 ChatColor.DARK_RED + "💀 CONCUSSION",
-                ChatColor.RED + "5 minutes until death! | /ghostnow to become ghost",
+                ChatColor.RED + "5 minutes until death! | /ghostnow to become a ghost",
                 10, 60, 10
         );
 
         player.sendMessage(ChatColor.DARK_RED + "✝ YOU ARE CONCUSSED! ✝");
         player.sendMessage(ChatColor.YELLOW + "You have 5 minutes to be rescued.");
-        player.sendMessage(ChatColor.YELLOW + "If not rescued, you will die and lose all items!");
+        player.sendMessage(ChatColor.YELLOW + "If you are not rescued, you will die and lose all items!");
         player.sendMessage(ChatColor.YELLOW + "Use " + ChatColor.GOLD + "/ghostnow" +
                 ChatColor.YELLOW + " for voluntary transition.");
 
@@ -144,7 +274,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                     triggerDeathWithLootLoss(player, "Time's up!");
                 }
             }
-        }.runTaskLater(this, 20L * 60 * 5);
+        }.runTaskLater(this, CONCUSSION_DURATION * 20L);
     }
 
     private void triggerDeathWithLootLoss(Player player, String reason) {
@@ -200,7 +330,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         concussionStartTime.remove(uuid);
 
         player.removePotionEffect(PotionEffectType.BLINDNESS);
-        player.removePotionEffect(PotionEffectType.SLOWNESS); // API 1.21
+        player.removePotionEffect(PotionEffectType.SLOW);
     }
 
     @EventHandler
@@ -215,17 +345,17 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         ItemStack item = rescuer.getInventory().getItemInMainHand();
 
         if (item.getType() == Material.GOLDEN_APPLE) {
-            healFromConcussion(target, 0.20, "golden apple");
+            healFromConcussion(target, GOLDEN_APPLE_HEAL_PERCENT, "golden apple");
             item.setAmount(item.getAmount() - 1);
             rescuer.sendMessage(ChatColor.GREEN + "You saved " + target.getName() + " with a golden apple!");
 
         } else if (item.getType() == Material.ENCHANTED_GOLDEN_APPLE) {
-            healFromConcussion(target, 0.50, "enchanted apple");
+            healFromConcussion(target, ENCHANTED_APPLE_HEAL_PERCENT, "enchanted apple");
             item.setAmount(item.getAmount() - 1);
             rescuer.sendMessage(ChatColor.GREEN + "You saved " + target.getName() + " with an enchanted apple!");
 
         } else if (item.getType() == Material.TOTEM_OF_UNDYING) {
-            healFromConcussion(target, 1.0, "totem of undying");
+            healFromConcussion(target, TOTEM_HEAL_PERCENT, "totem of undying");
             item.setAmount(item.getAmount() - 1);
             rescuer.sendMessage(ChatColor.GREEN + "You saved " + target.getName() + " with a totem!");
         }
@@ -247,29 +377,31 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         if (method.equals("enchanted apple")) {
             double currentMaxHealth = player.getAttribute(Attribute.GENERIC_MAX_HEALTH).getBaseValue();
             if (currentMaxHealth < 20.0) {
-                double newMaxHealth = Math.min(currentMaxHealth + 2.0, 20.0);
+                double newMaxHealth = Math.min(currentMaxHealth + ENCHANTED_APPLE_HEALTH_BOOST, 20.0);
                 player.getAttribute(Attribute.GENERIC_MAX_HEALTH).setBaseValue(newMaxHealth);
-                player.setHealth(Math.min(newHealth + 1.0, newMaxHealth));
+                player.setHealth(Math.min(newHealth + ENCHANTED_APPLE_HEALTH_BOOST/2, newMaxHealth));
 
-                player.sendMessage(ChatColor.GOLD + "✚ Your max health increased by 1 heart!");
-                player.sendMessage(ChatColor.GOLD + "New max health: " + String.format("%.0f", newMaxHealth/2) + "❤");
+                player.sendMessage(ChatColor.GOLD + "✚ Your max health increased by " +
+                        String.format("%.1f", ENCHANTED_APPLE_HEALTH_BOOST/2) + " hearts!");
+                player.sendMessage(ChatColor.GOLD + "New max health: " +
+                        String.format("%.0f", newMaxHealth/2) + "❤");
             }
         }
 
         player.sendTitle(
-                ChatColor.GREEN + "💊 SAVED!",
-                ChatColor.GREEN + "You kept all items!",
+                ChatColor.GREEN + "💊 RESCUED!",
+                ChatColor.GREEN + "You kept all your items!",
                 0, 60, 20
         );
 
-        player.sendMessage(ChatColor.GREEN + "You were saved with a " + method + "! You kept inventory and experience.");
+        player.sendMessage(ChatColor.GREEN + "You were saved with a " + method + "! You kept your inventory and experience.");
         player.sendMessage(ChatColor.GREEN + "Health: " + String.format("%.1f", newHealth) + "♥");
 
         player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 100, 1));
         spawnRevivalParticles(player);
     }
 
-    // ========== СТАНДАРТНАЯ ЛОГИКА ==========
+    // ========== STANDARD LOGIC ==========
 
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
@@ -308,13 +440,11 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         player.setFlying(true);
         player.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 0, false, false));
         player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, Integer.MAX_VALUE, 0, false, false));
-
-        // API 1.21 использует INSTANT_HEALTH и SATURATION
-        player.addPotionEffect(new PotionEffect(PotionEffectType.INSTANT_HEALTH, Integer.MAX_VALUE, 0, false, false));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.HEAL, Integer.MAX_VALUE, 0, false, false));
         player.addPotionEffect(new PotionEffect(PotionEffectType.SATURATION, Integer.MAX_VALUE, 0, false, false));
 
         player.sendMessage(ChatColor.GRAY + "You are now in GHOST mode. You cannot interact with the world.");
-        player.sendMessage(ChatColor.GRAY + "Effects applied: Invisibility, Night Vision, Instant Health, Saturation");
+        player.sendMessage(ChatColor.GRAY + "Effects: Invisibility, Night Vision, Instant Health, Saturation");
         setupGhostTeam(player);
     }
 
@@ -323,7 +453,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
 
         player.removePotionEffect(PotionEffectType.INVISIBILITY);
         player.removePotionEffect(PotionEffectType.NIGHT_VISION);
-        player.removePotionEffect(PotionEffectType.INSTANT_HEALTH);
+        player.removePotionEffect(PotionEffectType.HEAL);
         player.removePotionEffect(PotionEffectType.SATURATION);
         player.setAllowFlight(false);
         player.setFlying(false);
@@ -361,7 +491,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         return team;
     }
 
-    // ========== ОБРАБОТКА ПЕРЕЗАХОДА ==========
+    // ========== REJOIN HANDLING ==========
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
@@ -369,11 +499,13 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         UUID uuid = player.getUniqueId();
         pendingRequests.remove(uuid);
 
+        stopSoulSandAuraAnimation(player);
+
         if (concussedPlayers.contains(uuid)) {
             player.sendMessage(ChatColor.DARK_RED + "⚠ WARNING!");
-            player.sendMessage(ChatColor.RED + "You left while concussed!");
-            player.sendMessage(ChatColor.YELLOW + "Concussion state will be restored on rejoin.");
-            player.sendMessage(ChatColor.YELLOW + "If concussion time runs out, you'll lose all items and XP!");
+            player.sendMessage(ChatColor.RED + "You left during concussion!");
+            player.sendMessage(ChatColor.YELLOW + "Concussion state will be restored upon rejoin.");
+            player.sendMessage(ChatColor.YELLOW + "If concussion time runs out, you'll lose all items and experience!");
         }
     }
 
@@ -386,19 +518,19 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             Long startTime = concussionStartTime.get(uuid);
             if (startTime != null) {
                 long elapsed = System.currentTimeMillis() - startTime;
-                long concussionDuration = 5 * 60 * 1000;
+                long concussionDuration = CONCUSSION_DURATION * 1000L;
 
                 if (elapsed >= concussionDuration) {
                     Bukkit.getScheduler().runTaskLater(this, () -> {
-                        triggerDeathWithLootLoss(player, "concussion time expired while offline");
+                        triggerDeathWithLootLoss(player, "concussion time expired while you were offline");
                     }, 20L);
                 } else {
                     long remainingTime = concussionDuration - elapsed;
                     int remainingTicks = (int) (remainingTime / 50);
 
-                    player.setHealth(0.5);
+                    player.setHealth(CONCUSSION_START_HEALTH);
                     player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, remainingTicks, 0, false, false));
-                    player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, remainingTicks, 255, false, false));
+                    player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, remainingTicks, 255, false, false));
 
                     new BukkitRunnable() {
                         @Override
@@ -409,13 +541,14 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                         }
                     }.runTaskLater(this, remainingTicks);
 
-                    player.sendMessage(ChatColor.YELLOW + "Concussion state restored. " + (remainingTime/1000) + " seconds left.");
+                    player.sendMessage(ChatColor.YELLOW + "Concussion state restored. " +
+                            (remainingTime/1000) + " seconds remaining.");
                 }
             }
         }
     }
 
-    // ========== КОМАНДЫ ==========
+    // ========== COMMANDS ==========
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
@@ -436,12 +569,12 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
 
     private boolean handleNecroMode(CommandSender sender, String[] args) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage("Only players can change death mode.");
+            sender.sendMessage("Only players can change post-death mode.");
             return true;
         }
         Player player = (Player) sender;
-        if (!player.hasPermission("necrocore.mode.change")) {
-            player.sendMessage(ChatColor.RED + "No permission to change death mode.");
+        if (!player.hasPermission("hardcorenecro.mode.change")) {
+            player.sendMessage(ChatColor.RED + "No permission to change post-death mode.");
             return true;
         }
         if (args.length == 0) {
@@ -454,7 +587,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             return true;
         }
         deathModes.put(player.getUniqueId(), mode);
-        player.sendMessage(ChatColor.GREEN + "Death mode set: " + mode);
+        player.sendMessage(ChatColor.GREEN + "Post-death mode set to: " + mode);
         return true;
     }
 
@@ -469,13 +602,13 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             player.sendMessage(ChatColor.RED + "You are not concussed!");
             return true;
         }
-        if (!player.hasPermission("necrocore.ghostnow")) {
+        if (!player.hasPermission("hardcorenecro.ghostnow")) {
             player.sendMessage(ChatColor.RED + "No permission to use this command.");
             return true;
         }
 
-        triggerDeathWithLootLoss(player, "voluntarily became ghost");
-        player.sendMessage(ChatColor.GRAY + "You voluntarily became a ghost, losing items and XP.");
+        triggerDeathWithLootLoss(player, "voluntarily became a ghost");
+        player.sendMessage(ChatColor.GRAY + "You voluntarily became a ghost, losing items and experience.");
         return true;
     }
 
@@ -484,7 +617,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             sender.sendMessage(ChatColor.YELLOW + "Usage: /necroforce <player|all>");
             return true;
         }
-        if (!sender.hasPermission("necrocore.force")) {
+        if (!sender.hasPermission("hardcorenecro.force")) {
             sender.sendMessage(ChatColor.RED + "No permission.");
             return true;
         }
@@ -497,7 +630,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                     revivedCount++;
                 }
             }
-            sender.sendMessage(ChatColor.GREEN + "Revived " + revivedCount + " players.");
+            sender.sendMessage(ChatColor.GREEN + "Players revived: " + revivedCount);
             return true;
         }
 
@@ -507,7 +640,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             return true;
         }
         if (target.getGameMode() != GameMode.SPECTATOR && !ghosts.contains(target.getUniqueId())) {
-            sender.sendMessage(ChatColor.RED + "Player is not dead.");
+            sender.sendMessage(ChatColor.RED + "This player is not dead.");
             return true;
         }
 
@@ -523,7 +656,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         }
 
         Player player = (Player) sender;
-        if (!player.hasPermission("necrocore.revive")) {
+        if (!player.hasPermission("hardcorenecro.revive")) {
             player.sendMessage(ChatColor.RED + "No permission to revive players.");
             return true;
         }
@@ -552,7 +685,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             return true;
         }
         if (!(target.getGameMode() == GameMode.SPECTATOR || ghosts.contains(target.getUniqueId()))) {
-            player.sendMessage(ChatColor.RED + "This player is not dead (not spectator or ghost).");
+            player.sendMessage(ChatColor.RED + "This player is not dead (not in spectator or ghost mode).");
             return true;
         }
 
@@ -562,16 +695,16 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             player.sendMessage(ChatColor.RED + "You must hold totems in both hands.");
             return true;
         }
-        if (player.getHealth() < 8d) {
+        if (player.getHealth() < 8.0) {
             player.sendMessage(ChatColor.RED + "You must have at least 4 hearts of health.");
             return true;
         }
 
         pendingRequests.put(target.getUniqueId(), new RevivalRequest(player.getUniqueId()));
         player.sendMessage(ChatColor.YELLOW + "Waiting for confirmation from " +
-                target.getName() + ChatColor.GRAY + " (60s)");
+                target.getName() + ChatColor.GRAY + " (" + REVIVAL_REQUEST_TIMEOUT + "s)");
         target.sendMessage(ChatColor.GOLD + "Player " + player.getName() +
-                " wants to revive you. Type /necro accept within 60 seconds.");
+                " wants to revive you. Type /necro accept within " + REVIVAL_REQUEST_TIMEOUT + " seconds.");
 
         Bukkit.getScheduler().runTaskLater(this, () -> {
             RevivalRequest removed = pendingRequests.remove(target.getUniqueId());
@@ -579,34 +712,34 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                 Player reqOwner = Bukkit.getPlayer(removed.reviver);
                 if (reqOwner != null) {
                     reqOwner.sendMessage(ChatColor.RED + "Revival request for " +
-                            target.getName() + " expired.");
+                            target.getName() + " has expired.");
                 }
                 if (target.isOnline()) {
                     target.sendMessage(ChatColor.RED + "Revival request from " +
-                            player.getName() + " expired.");
+                            player.getName() + " has expired.");
                 }
             }
-        }, 20L * 60);
+        }, REVIVAL_REQUEST_TIMEOUT * 20L);
         return true;
     }
 
     private boolean handleAccept(Player player) {
-        if (!player.hasPermission("necrocore.ghost.accept")) {
+        if (!player.hasPermission("hardcorenecro.ghost.accept")) {
             player.sendMessage(ChatColor.RED + "No permission to accept revivals.");
             return true;
         }
         RevivalRequest req = pendingRequests.remove(player.getUniqueId());
         if (req == null) {
-            player.sendMessage(ChatColor.RED + "No active revival request.");
+            player.sendMessage(ChatColor.RED + "No active revival requests.");
             return true;
         }
         Player reviver = Bukkit.getPlayer(req.reviver);
         if (reviver == null) {
-            player.sendMessage(ChatColor.RED + "Reviver left the server.");
+            player.sendMessage(ChatColor.RED + "The reviver left the server.");
             return true;
         }
         if (reviver.getGameMode() == GameMode.SPECTATOR || ghosts.contains(reviver.getUniqueId())) {
-            player.sendMessage(ChatColor.RED + "Reviver cannot revive right now.");
+            player.sendMessage(ChatColor.RED + "The reviver cannot revive right now.");
             return true;
         }
         PlayerInventory invRev = reviver.getInventory();
@@ -615,7 +748,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             reviver.sendMessage(ChatColor.RED + "You must hold totems in both hands.");
             return true;
         }
-        if (reviver.getHealth() < 8d) {
+        if (reviver.getHealth() < 8.0) {
             reviver.sendMessage(ChatColor.RED + "You must have at least 4 hearts of health.");
             return true;
         }
@@ -630,7 +763,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         }
     }
 
-    // ========== СИСТЕМА ВОСКРЕШЕНИЯ ==========
+    // ========== REVIVAL SYSTEM WITH ANIMATION ==========
 
     private String getReviveKey(UUID reviverId, UUID targetId) {
         return reviverId.toString() + "_" + targetId.toString();
@@ -639,8 +772,8 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
     private double getFailureChance(UUID reviverId, UUID targetId) {
         String key = getReviveKey(reviverId, targetId);
         int successCount = successfulRevives.getOrDefault(key, 0);
-        double chance = 0.70 * Math.pow(0.85, successCount);
-        return Math.max(chance, 0.10);
+        double chance = BASE_FAILURE_CHANCE * Math.pow(FAILURE_MULTIPLIER, successCount);
+        return Math.max(chance, MIN_FAILURE_CHANCE);
     }
 
     private void recordSuccessfulRevive(UUID reviverId, UUID targetId) {
@@ -652,7 +785,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
     private void performRevive(Player reviver, Player target) {
         PlayerInventory inv = reviver.getInventory();
         inv.getItemInOffHand().setAmount(inv.getItemInOffHand().getAmount() - 1);
-        reviver.damage(4.0);
+        reviver.damage(REVIVAL_HEALTH_COST);
 
         double failureChance = getFailureChance(reviver.getUniqueId(), target.getUniqueId());
 
@@ -663,60 +796,109 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             zombie.setCustomNameVisible(true);
 
             reviver.sendMessage(ChatColor.DARK_RED + "Revival failed! Instead of " + target.getName() +
-                    " a zombie appeared! (Failure chance: " + String.format("%.1f", failureChance * 100) + "%)");
+                    ", a zombie appeared! (Failure chance: " + String.format("%.1f", failureChance * 100) + "%)");
             target.sendMessage(ChatColor.DARK_RED + "Revival attempt by " + reviver.getName() +
                     " failed. Your zombie version now roams the world!");
             return;
         }
 
-        exitGhost(target);
-        target.setGameMode(GameMode.SURVIVAL);
-        target.teleport(reviver);
+        reviver.sendMessage(ChatColor.YELLOW + "⚡ Starting revival ritual...");
+        target.sendMessage(ChatColor.YELLOW + "⚡ Player " + reviver.getName() + " is starting your revival ritual...");
 
-        if (target.getHealth() <= 0.0) {
-            target.setHealth(Math.min(1.0, target.getMaxHealth()));
-        } else {
-            target.setHealth(Math.min(2.0, target.getMaxHealth()));
-        }
+        startSoulSandAuraAnimation(reviver, REVIVAL_ANIMATION_DELAY_NORMAL);
 
-        adjustMaxHealth(reviver, -4);
-        adjustMaxHealth(target, +2);
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!reviver.isOnline() || !target.isOnline()) {
+                    reviver.sendMessage(ChatColor.RED + "Ritual interrupted: one of the players left.");
+                    if (target.isOnline()) {
+                        target.sendMessage(ChatColor.RED + "Revival ritual interrupted.");
+                    }
+                    stopSoulSandAuraAnimation(reviver);
+                    return;
+                }
 
-        target.addPotionEffect(new PotionEffect(PotionEffectType.HUNGER, 1200, 1));
+                if (!(target.getGameMode() == GameMode.SPECTATOR || ghosts.contains(target.getUniqueId()))) {
+                    reviver.sendMessage(ChatColor.RED + "Ritual interrupted: target is no longer dead.");
+                    target.sendMessage(ChatColor.RED + "Revival ritual interrupted.");
+                    stopSoulSandAuraAnimation(reviver);
+                    return;
+                }
 
-        spawnRevivalParticles(target);
-        recordSuccessfulRevive(reviver.getUniqueId(), target.getUniqueId());
+                exitGhost(target);
+                target.setGameMode(GameMode.SURVIVAL);
+                target.teleport(reviver);
 
-        double newChance = getFailureChance(reviver.getUniqueId(), target.getUniqueId());
-        reviver.sendMessage(ChatColor.GREEN + "You revived " + target.getName() +
-                ChatColor.GRAY + " (Next failure chance: " + String.format("%.1f", newChance * 100) + "%)");
-        target.sendMessage(ChatColor.GREEN + "You were revived by " + reviver.getName());
+                if (target.getHealth() <= 0.0) {
+                    target.setHealth(Math.min(1.0, target.getMaxHealth()));
+                } else {
+                    target.setHealth(Math.min(2.0, target.getMaxHealth()));
+                }
+
+                adjustMaxHealth(reviver, HEALTH_CHANGE_REVIVER);
+                adjustMaxHealth(target, HEALTH_CHANGE_TARGET);
+
+                target.addPotionEffect(new PotionEffect(PotionEffectType.HUNGER, 1200, 1));
+
+                spawnRevivalParticles(target);
+                recordSuccessfulRevive(reviver.getUniqueId(), target.getUniqueId());
+
+                double newChance = getFailureChance(reviver.getUniqueId(), target.getUniqueId());
+                reviver.sendMessage(ChatColor.GREEN + "You revived " + target.getName() +
+                        ChatColor.GRAY + " (Next failure chance: " + String.format("%.1f", newChance * 100) + "%)");
+                target.sendMessage(ChatColor.GREEN + "You were revived by " + reviver.getName());
+
+                stopSoulSandAuraAnimation(reviver);
+            }
+        }.runTaskLater(this, REVIVAL_ANIMATION_DELAY_NORMAL * 20L);
     }
 
     private void forceRevivePlayer(CommandSender sender, Player target) {
         Player reviver = sender instanceof Player ? (Player) sender : null;
 
-        exitGhost(target);
-        target.setGameMode(GameMode.SURVIVAL);
-
         if (reviver != null) {
-            target.teleport(reviver);
-        } else {
-            target.teleport(target.getWorld().getSpawnLocation());
+            reviver.sendMessage(ChatColor.YELLOW + "⚡ Starting forced revival ritual...");
+            startSoulSandAuraAnimation(reviver, REVIVAL_ANIMATION_DELAY_FORCE);
         }
 
-        if (target.getHealth() <= 0.0) {
-            target.setHealth(Math.min(4.0, target.getMaxHealth()));
-        }
+        target.sendMessage(ChatColor.YELLOW + "⚡ Starting forced revival...");
 
-        target.addPotionEffect(new PotionEffect(PotionEffectType.HUNGER, 1200, 1));
-        spawnRevivalParticles(target);
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!target.isOnline()) {
+                    if (reviver != null && reviver.isOnline()) {
+                        reviver.sendMessage(ChatColor.RED + "Ritual interrupted: target left.");
+                        stopSoulSandAuraAnimation(reviver);
+                    }
+                    return;
+                }
 
-        if (reviver == null && sender != null) {
-            sender.sendMessage(ChatColor.GREEN + "Force revived " + target.getName());
-        }
+                exitGhost(target);
+                target.setGameMode(GameMode.SURVIVAL);
 
-        target.sendMessage(ChatColor.GREEN + "You were force revived by an administrator.");
+                if (reviver != null) {
+                    target.teleport(reviver);
+                    stopSoulSandAuraAnimation(reviver);
+                } else {
+                    target.teleport(target.getWorld().getSpawnLocation());
+                }
+
+                if (target.getHealth() <= 0.0) {
+                    target.setHealth(Math.min(4.0, target.getMaxHealth()));
+                }
+
+                target.addPotionEffect(new PotionEffect(PotionEffectType.HUNGER, 1200, 1));
+                spawnRevivalParticles(target);
+
+                if (reviver == null && sender != null) {
+                    sender.sendMessage(ChatColor.GREEN + "Force revived " + target.getName());
+                }
+
+                target.sendMessage(ChatColor.GREEN + "You were force revived by an admin.");
+            }
+        }.runTaskLater(this, REVIVAL_ANIMATION_DELAY_FORCE * 20L);
     }
 
     private void spawnRevivalParticles(Player player) {
@@ -731,7 +913,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
             double x = player.getLocation().getX() + (Math.random() - 0.5) * 2;
             double y = player.getLocation().getY() + Math.random() * 2;
             double z = player.getLocation().getZ() + (Math.random() - 0.5) * 2;
-            player.getWorld().spawnParticle(Particle.ENCHANT, x, y, z, 1, 0, 0, 0, 0);
+            player.getWorld().spawnParticle(Particle.ENCHANTMENT_TABLE, x, y, z, 1, 0, 0, 0, 0);
         }
     }
 
@@ -809,7 +991,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         return out;
     }
 
-    // ========== ОБРАБОТЧИКИ СОБЫТИЙ ==========
+    // ========== EVENT HANDLERS ==========
 
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
@@ -883,8 +1065,8 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
         String msg = e.getMessage().toLowerCase();
         if (msg.equals("/gamemode ghost") || msg.equals("/gm ghost")) {
             Player p = e.getPlayer();
-            if (!p.hasPermission("necrocore.ghost.gamemode")) {
-                p.sendMessage(ChatColor.RED + "No permission to switch to ghost.");
+            if (!p.hasPermission("hardcorenecro.ghost.gamemode")) {
+                p.sendMessage(ChatColor.RED + "No permission to switch to ghost mode.");
                 e.setCancelled(true);
                 return;
             }
@@ -893,7 +1075,7 @@ public class NecroCore extends JavaPlugin implements Listener, TabCompleter {
                 p.sendMessage(ChatColor.GRAY + "You manually switched to GHOST mode.");
             } else {
                 exitGhost(p);
-                p.sendMessage(ChatColor.GREEN + "You exited GHOST mode.");
+                p.sendMessage(ChatColor.GREEN + "You left GHOST mode.");
             }
             e.setCancelled(true);
         }
