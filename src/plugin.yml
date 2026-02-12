@@ -1,9 +1,9 @@
 name: NecroCore
-version: 1.2.0
+version: 1.3.0
 main: factorsi.di.NecroCore.NecroCore
-description: A plugin that lets players get revived in hardcore mode with concussion system.
+description: Плагин, позволяющий игрокам возрождаться в хардкорном режиме с системой контузии.
 author: Factorsi_di|Nicto_55
-api-version: "1.21"
+api-version: "1.20"
 website: https://example.com
 
 commands:
