@@ -6,35 +6,25 @@
 
 	<groupId>factorsi.di</groupId>
 	<artifactId>NecroCore</artifactId>
-	<version>1.2.0</version>
+	<version>1.3.0</version>
 	<packaging>jar</packaging>
 
 	<properties>
-		<java.version>1.8</java.version>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<src.dir>src</src.dir>
 	</properties>
 
 	<build>
-		<sourceDirectory>${src.dir}</sourceDirectory>
 		<defaultGoal>clean package</defaultGoal>
-		<resources>
-			<resource>
-				<directory>${src.dir}</directory>
-				<excludes>
-					<exclude>**/*.java</exclude>
-				</excludes>
-			</resource>
-		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.13.0</version>
 				<configuration>
-					<source>${java.version}</source>
-					<target>${java.version}</target>  <!-- Fixed: Added missing closing brace -->
+					<source>1.8</source>
+					<target>1.8</target>
 				</configuration>
 			</plugin>
 		</plugins>
@@ -42,17 +32,17 @@
 
 	<repositories>
 		<repository>
-			<id>spigotmc-repo</id>
-			<url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
+			<id>papermc</id>
+			<url>https://repo.papermc.io/repository/maven-public/</url>
 		</repository>
 	</repositories>
 
 	<dependencies>
 		<dependency>
-			<groupId>org.spigotmc</groupId>
-			<artifactId>spigot-api</artifactId>
-			<version>1.21.1-R0.1-SNAPSHOT</version>
+			<groupId>io.papermc.paper</groupId>
+			<artifactId>paper-api</artifactId>
+			<version>1.20.1-R0.1-SNAPSHOT</version>
 			<scope>provided</scope>
 		</dependency>
 	</dependencies>
-</project>
+</project>>
