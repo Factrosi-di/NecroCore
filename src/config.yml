@@ -1,0 +1,73 @@
+# ======================================================
+#                    NECROCORE CONFIGURATION
+# ======================================================
+# This file contains all adjustable parameters for the NecroCore plugin.
+# Changes require server restart or /reload (if plugin supports reloading).
+
+# Language setting: "en" for English, "ru" for Russian
+language: en
+
+# ======================================================
+# 1. CONCUSSION SETTINGS
+# ======================================================
+
+# Duration of the concussion state in seconds.
+# After this time, the player dies and loses all items.
+concussion-duration: 300
+
+# Health to which the player drops when entering concussion (in half-hearts).
+# 0.5 = half a heart, 1.0 = one heart, 2.0 = two hearts, etc.
+concussion-start-health: 0.5
+
+# ======================================================
+# 2. REVIVAL SETTINGS
+# ======================================================
+
+# Duration of the revival animation in seconds (for normal /necro).
+revival-animation-delay-normal: 4
+
+# Duration of the revival animation in seconds (for forced /necroforce).
+revival-animation-delay-force: 3
+
+# Amount of health the reviver loses on successful revival (in half-hearts).
+revival-health-cost: 4.0
+
+# Timeout for revival request confirmation in seconds.
+revival-request-timeout: 60
+
+# Base failure chance for revival (0.0 - 1.0). 0.7 = 70%.
+revival-base-failure-chance: 0.70
+
+# Multiplier for failure chance decrease after each successful attempt (lower = faster decrease).
+revival-failure-multiplier: 0.85
+
+# Minimum failure chance, below which it cannot drop.
+revival-min-failure-chance: 0.10
+
+# Change in reviver's max health (in half-hearts, can be negative).
+revival-health-change-reviver: -4.0
+
+# Change in revived player's max health (in half-hearts).
+revival-health-change-target: 2.0
+
+# ======================================================
+# 3. CONCUSSION HEALING WITH ITEMS
+# ======================================================
+
+# Percentage of health restored by a golden apple (relative to max health).
+golden-apple-heal-percent: 0.20
+
+# Percentage of health restored by an enchanted golden apple.
+enchanted-apple-heal-percent: 0.50
+
+# Percentage of health restored by a totem of undying (1.0 = full health).
+totem-heal-percent: 1.0
+
+# Additional max health boost when healed with an enchanted apple (in half-hearts).
+enchanted-apple-health-boost: 2.0
+
+# ======================================================
+# 4. OTHER SETTINGS
+# ======================================================
+
+# (Additional parameters can be added here as the plugin expands)
