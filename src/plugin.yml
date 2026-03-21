@@ -1,9 +1,9 @@
 name: NecroCore
-version: 1.4.0
+version: 1.6.0
 main: factorsi.di.NecroCore.NecroCore
-description: Плагин, позволяющий игрокам возрождаться в хардкорном режиме с системой контузии.
+description: Hardcore death system with concussion and ghosts (data saving + health/ghost list commands)
 author: Factorsi_di|Nicto_55
-api-version: "1.20"
+api-version: "1.21"
 website: https://example.com
 
 commands:
@@ -19,6 +19,12 @@ commands:
   ghostnow:
     description: Immediately transition to ghost mode while concussed
     usage: /ghostnow
+  necrohealth:
+    description: Show players' current max health (paginated)
+    usage: /necrohealth [page]
+  necroghosts:
+    description: Show list of ghosts with death coordinates (paginated)
+    usage: /necroghosts [page]
 
 permissions:
   hardcorenecro.revive:
@@ -39,3 +45,9 @@ permissions:
   hardcorenecro.ghostnow:
     description: Allow transition to ghost while concussed
     default: true
+  hardcorenecro.health:
+    description: Allow viewing players' max health with /necrohealth
+    default: op
+  hardcorenecro.ghosts:
+    description: Allow viewing ghost list with /necroghosts
+    default: op
