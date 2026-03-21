@@ -12,11 +12,9 @@ language: en
 # ======================================================
 
 # Duration of the concussion state in seconds.
-# After this time, the player dies and loses all items.
 concussion-duration: 300
 
 # Health to which the player drops when entering concussion (in half-hearts).
-# 0.5 = half a heart, 1.0 = one heart, 2.0 = two hearts, etc.
 concussion-start-health: 0.5
 
 # ======================================================
@@ -69,5 +67,3 @@ enchanted-apple-health-boost: 2.0
 # ======================================================
 # 4. OTHER SETTINGS
 # ======================================================
-
-# (Additional parameters can be added here as the plugin expands)
